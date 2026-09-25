@@ -66,6 +66,9 @@ section{padding:45px 6%}
 .full{grid-column:auto}
 }
 </style>
+<!-- Firebase cloud storage for school activities -->
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 </head>
 <body>
 
@@ -229,16 +232,54 @@ function adminLogout() {
     renderPosts();
 }
 
-function getPosts() {
+// ===== CLOUD STORAGE =====
+// Create a Firebase project and paste its Web App configuration below.
+// The rest of the website remains unchanged.
+const firebaseConfig = {
+    apiKey: "PASTE_YOUR_FIREBASE_API_KEY",
+    authDomain: "PASTE_YOUR_PROJECT.firebaseapp.com",
+    databaseURL: "https://PASTE_YOUR_PROJECT-default-rtdb.firebaseio.com",
+    projectId: "PASTE_YOUR_PROJECT",
+    storageBucket: "PASTE_YOUR_PROJECT.firebasestorage.app",
+    messagingSenderId: "PASTE_YOUR_SENDER_ID",
+    appId: "PASTE_YOUR_APP_ID"
+};
+
+let cloudReady = false;
+let postsCache = [];
+
+try {
+    firebase.initializeApp(firebaseConfig);
+    window.schoolDB = firebase.database();
+    cloudReady = true;
+} catch (e) {
+    console.error("Firebase setup error:", e);
+}
+
+async function getPosts() {
+    if (!cloudReady) return postsCache;
     try {
-        return JSON.parse(localStorage.getItem("alegriaSchoolPosts") || "[]");
-    } catch(e) {
-        return [];
+        const snapshot = await schoolDB.ref("alegriaSchoolPosts").once("value");
+        const data = snapshot.val() || {};
+        postsCache = Object.keys(data).map(function(key) {
+            return data[key];
+        }).sort(function(a, b) {
+            return Number(b.id) - Number(a.id);
+        });
+        return postsCache;
+    } catch (e) {
+        console.error("Could not load school activities:", e);
+        return postsCache;
     }
 }
 
-function savePosts(posts) {
-    localStorage.setItem("alegriaSchoolPosts", JSON.stringify(posts));
+async function savePosts(posts) {
+    postsCache = posts;
+    if (!cloudReady) throw new Error("Cloud storage is not configured.");
+    await schoolDB.ref("alegriaSchoolPosts").set(posts.reduce(function(obj, post) {
+        obj[String(post.id)] = post;
+        return obj;
+    }, {}));
 }
 
 function escapeHTML(text) {
@@ -292,11 +333,12 @@ function compressImage(file, maxSize, quality) {
     });
 }
 
-function addPost() {
+async function addPost() {
     if (!adminLoggedIn) {
         alert("Administrator access is required.");
         return;
     }
+
     const title = document.getElementById("postTitle").value.trim();
     const date = document.getElementById("postDate").value;
     const text = document.getElementById("postText").value.trim();
@@ -307,34 +349,36 @@ function addPost() {
         return;
     }
 
-    const publish = function(imageData) {
-        const posts = getPosts();
-        posts.unshift({
-            id: Date.now(),
-            title: title,
-            date: date || new Date().toISOString().slice(0,10),
-            text: text,
-            image: imageData || ""
-        });
+    if (!cloudReady) {
+        alert("Cloud storage is not configured yet. Please add your Firebase configuration.");
+        return;
+    }
+
+    const publish = async function(imageData) {
         try {
-            savePosts(posts);
-        } catch(e) {
-            alert("The photo may be too large for browser storage. Try a smaller photo.");
-            return;
+            const posts = await getPosts();
+            posts.unshift({
+                id: Date.now(),
+                title: title,
+                date: date || new Date().toISOString().slice(0,10),
+                text: text,
+                image: imageData || ""
+            });
+
+            await savePosts(posts);
+            clearForm();
+            await renderPosts();
+            alert("School activity published successfully. Everyone can now see it.");
+        } catch (e) {
+            console.error(e);
+            alert("The activity could not be saved to the cloud. Please check your Firebase setup and internet connection.");
         }
-        clearForm();
-        renderPosts();
-        document.getElementById("postsList").scrollIntoView({behavior:"smooth"});
     };
 
     if (file) {
-        // Automatically resize and compress the photo before saving it.
-        // This keeps the stored image much smaller and helps prevent
-        // browser localStorage from becoming too large.
+        // Automatically resize and compress the photo before uploading.
         compressImage(file, 1000, 0.65)
-            .then(function(smallImage) {
-                publish(smallImage);
-            })
+            .then(publish)
             .catch(function() {
                 alert("The photo could not be compressed. Please choose another image.");
             });
@@ -343,15 +387,22 @@ function addPost() {
     }
 }
 
-function deletePost(id) {
+async function deletePost(id) {
     if (!adminLoggedIn) {
         alert("Administrator access is required.");
         return;
     }
+
     if (confirm("Delete this post?")) {
-        const posts = getPosts().filter(p => p.id !== id);
-        savePosts(posts);
-        renderPosts();
+        try {
+            const posts = await getPosts();
+            const remaining = posts.filter(function(p) { return p.id !== id; });
+            await savePosts(remaining);
+            await renderPosts();
+        } catch (e) {
+            console.error(e);
+            alert("The post could not be deleted from the cloud.");
+        }
     }
 }
 
@@ -369,9 +420,15 @@ function formatDate(value) {
     });
 }
 
-function renderPosts() {
+async function renderPosts() {
     const list = document.getElementById("postsList");
-    const posts = getPosts();
+
+    if (!cloudReady) {
+        list.innerHTML = '<div class="empty">Cloud storage is not configured yet.</div>';
+        return;
+    }
+
+    const posts = await getPosts();
 
     if (!posts.length) {
         list.innerHTML = '<div class="empty">No school activities have been posted yet.</div>';
