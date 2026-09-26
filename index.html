@@ -180,7 +180,15 @@ section{padding:45px 6%}
 </section>
 </a></p>
 <footer>
-<p><strong>Alegria Elementary School</strong<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<p><strong>Alegria Elementary School</strong></p>
+<p>Department of Education • Philippines </p>
+<p>© 2026 All Rights Reserved 
+</p>
+</div>
+</section> Developed by Zaldy Jr. A. Sombilon </p>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // SUPABASE CONFIG
 const SUPABASE_URL = "https://mghwirucqayopmzeztdx.supabase.co";
@@ -201,14 +209,20 @@ async function adminLogin(){
   const email=document.getElementById("adminEmail").value.trim();
   const password=document.getElementById("adminPassword").value;
   const msg=document.getElementById("loginMessage");
+  if(!email||!password){msg.textContent="Please enter your email and password.";return;}
   msg.textContent="Signing in...";
-  const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
-  if(error){msg.textContent="Login failed: "+error.message; return;}
-  adminLoggedIn=!!data.user;
-  document.getElementById("adminPanel").style.display="block";
-  closeAdminLogin();
-  await renderPosts();
-  document.getElementById("adminPanel").scrollIntoView({behavior:"smooth"});
+  try{
+    const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
+    if(error){msg.textContent="Login failed: "+error.message;return;}
+    if(!data.user){msg.textContent="Login failed: no authenticated user returned.";return;}
+    adminLoggedIn=true;
+    document.getElementById("adminPanel").style.display="block";
+    closeAdminLogin();
+    await renderPosts();
+    document.getElementById("adminPanel").scrollIntoView({behavior:"smooth"});
+  }catch(e){
+    msg.textContent="Login error: "+(e.message||e);
+  }
 }
 
 async function adminLogout(){
@@ -220,7 +234,8 @@ async function adminLogout(){
 }
 
 async function checkSession(){
-  const {data}=await supabaseClient.auth.getSession();
+  const {data,error}=await supabaseClient.auth.getSession();
+  if(error){console.error("Session error:",error);return;}
   adminLoggedIn=!!data.session;
   document.getElementById("adminPanel").style.display=adminLoggedIn?"block":"none";
 }
@@ -253,7 +268,7 @@ function clearForm(){
 function compressImage(file,maxSize=1200,quality=0.72){
  return new Promise((resolve,reject)=>{
   const reader=new FileReader();
-  reader.onload=e=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>maxSize||h>maxSize){if(w>h){h=Math.round(h*maxSize/w);w=maxSize}else{w=Math.round(w*maxSize/h);h=maxSize}}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);c.toBlob(blob=>blob?resolve(blob):reject(),"image/jpeg",quality)};img.onerror=reject;img.src=e.target.result};reader.onerror=reject;reader.readAsDataURL(file);
+  reader.onload=e=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>maxSize||h>maxSize){if(w>h){h=Math.round(h*maxSize/w);w=maxSize}else{w=Math.round(w*maxSize/h);h=maxSize}}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);c.toBlob(blob=>blob?resolve(blob):reject(new Error("Image compression failed")),"image/jpeg",quality)};img.onerror=()=>reject(new Error("Could not read image"));img.src=e.target.result};reader.onerror=()=>reject(new Error("Could not read file"));reader.readAsDataURL(file);
  });
 }
 
@@ -290,14 +305,6 @@ async function deletePost(id){
 }
 
 (async()=>{await checkSession();await renderPosts();})();
-</script>on class="delete-btn" onclick="deletePost(' + p.id + ')">Delete Post</button>' : '') +
-            '</article>';
-    }).join("");
-}
-
-renderPosts();
 </script>
 </body>
 </html>
-NEXT_PUBLIC_SUPABASE_URL=https://mghwirucqayopmzeztdx.supabase.co"";
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_Cy6U_4kaKfLU0LYAYwbaKA_WQp_daJZ
