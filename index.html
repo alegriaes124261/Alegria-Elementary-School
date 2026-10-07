@@ -193,52 +193,153 @@ section{padding:45px 6%}
 // SUPABASE CONFIG
 const SUPABASE_URL = "https://mghwirucqayopmzeztdx.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Cy6U_4kaKfLU0LYAYwbaKA_WQp_daJZ";
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+// Create the client only after the Supabase library has loaded.
+if (!window.supabase || typeof window.supabase.createClient !== "function") {
+  throw new Error("Supabase library failed to load. Check your internet connection.");
+}
+const supabaseClient = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  }
+);
+
 let adminLoggedIn = false;
+let currentAdminUser = null;
 
 function openAdminLogin(){
-  document.getElementById("adminLogin").style.display="block";
+  const modal=document.getElementById("adminLogin");
+  modal.style.display="block";
   document.getElementById("adminEmail").value="";
   document.getElementById("adminPassword").value="";
   document.getElementById("loginMessage").textContent="";
-  document.getElementById("adminEmail").focus();
+  setTimeout(()=>document.getElementById("adminEmail").focus(),50);
 }
-function closeAdminLogin(){document.getElementById("adminLogin").style.display="none";}
+
+function closeAdminLogin(){
+  document.getElementById("adminLogin").style.display="none";
+}
+
+function showLoginMessage(message, success=false){
+  const msg=document.getElementById("loginMessage");
+  msg.style.color=success ? "#2e7d32" : "#c62828";
+  msg.textContent=message;
+}
 
 async function adminLogin(){
-  const email=document.getElementById("adminEmail").value.trim();
+  const email=document.getElementById("adminEmail").value.trim().toLowerCase();
   const password=document.getElementById("adminPassword").value;
-  const msg=document.getElementById("loginMessage");
-  if(!email||!password){msg.textContent="Please enter your email and password.";return;}
-  msg.textContent="Signing in...";
+  const button=document.querySelector("#adminLogin .btn");
+
+  if(!email || !password){
+    showLoginMessage("Please enter your email and password.");
+    return;
+  }
+
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    showLoginMessage("Please enter a valid email address.");
+    return;
+  }
+
+  showLoginMessage("Signing in...", true);
+  if(button) button.disabled=true;
+
   try{
-    const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
-    if(error){msg.textContent="Login failed: "+error.message;return;}
-    if(!data.user){msg.textContent="Login failed: no authenticated user returned.";return;}
+    // Do NOT call signOut() before login. A failed signOut/network request
+    // can prevent signInWithPassword() from running and cause "Failed to fetch".
+    const {data,error}=await supabaseClient.auth.signInWithPassword({
+      email: email,
+      password: password
+    });
+
+    if(error){
+      let message=error.message || "Unable to sign in.";
+      if(/invalid login credentials/i.test(message)){
+        message="Invalid email or password. Make sure the account exists in Supabase Authentication and the password is correct.";
+      }else if(/email not confirmed/i.test(message)){
+        message="This email is not confirmed in Supabase. Confirm the email first, or disable email confirmation in Supabase Authentication settings.";
+      }
+      showLoginMessage("Login failed: " + message);
+      return;
+    }
+
+    if(!data || !data.session || !data.user){
+      showLoginMessage("Login failed: Supabase did not return an active session.");
+      return;
+    }
+
     adminLoggedIn=true;
+    currentAdminUser=data.user;
+
     document.getElementById("adminPanel").style.display="block";
     closeAdminLogin();
     await renderPosts();
     document.getElementById("adminPanel").scrollIntoView({behavior:"smooth"});
+
   }catch(e){
-    msg.textContent="Login error: "+(e.message||e);
+    console.error("Administrator login error:",e);
+    showLoginMessage("Login error: " + (e.message || String(e)));
+  }finally{
+    if(button) button.disabled=false;
   }
 }
 
 async function adminLogout(){
-  await supabaseClient.auth.signOut();
+  try{
+    await supabaseClient.auth.signOut();
+  }catch(e){
+    console.error("Logout error:",e);
+  }
   adminLoggedIn=false;
+  currentAdminUser=null;
   document.getElementById("adminPanel").style.display="none";
   clearForm();
   await renderPosts();
 }
 
 async function checkSession(){
-  const {data,error}=await supabaseClient.auth.getSession();
-  if(error){console.error("Session error:",error);return;}
-  adminLoggedIn=!!data.session;
-  document.getElementById("adminPanel").style.display=adminLoggedIn?"block":"none";
+  try{
+    const {data,error}=await supabaseClient.auth.getSession();
+    if(error) throw error;
+
+    if(data && data.session && data.session.user){
+      adminLoggedIn=true;
+      currentAdminUser=data.session.user;
+      document.getElementById("adminPanel").style.display="block";
+    }else{
+      adminLoggedIn=false;
+      currentAdminUser=null;
+      document.getElementById("adminPanel").style.display="none";
+    }
+  }catch(error){
+    console.error("Session error:",error);
+    adminLoggedIn=false;
+    currentAdminUser=null;
+    document.getElementById("adminPanel").style.display="none";
+  }
 }
+
+// Keep the page state synchronized when Supabase refreshes, signs in, or signs out.
+supabaseClient.auth.onAuthStateChange((event, session)=>{
+  adminLoggedIn=!!(session && session.user);
+  currentAdminUser=session ? session.user : null;
+  const panel=document.getElementById("adminPanel");
+  if(panel) panel.style.display=adminLoggedIn ? "block" : "none";
+});
+
+// Allow pressing Enter in either login field.
+document.getElementById("adminEmail").addEventListener("keydown",e=>{
+  if(e.key==="Enter") adminLogin();
+});
+document.getElementById("adminPassword").addEventListener("keydown",e=>{
+  if(e.key==="Enter") adminLogin();
+});
 
 function escapeHTML(text){
   return String(text??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]));
