@@ -149,6 +149,9 @@ section{padding:45px 6%}
 <button class="btn" onclick="adminLogin()">Log In</button>
 <button class="btn" style="background:#eceff1" onclick="closeAdminLogin()">Cancel</button>
 <p id="loginMessage" style="color:#c62828;margin-top:8px"></p>
+<p style="font-size:12px;color:#607d8b;margin-top:6px">
+If login fails, the message now shows whether the problem is Supabase connection, email confirmation, or credentials.
+</p>
 </div>
 
 <div id="postsList" class="posts"></div>
@@ -247,25 +250,57 @@ async function adminLogin(){
     return;
   }
 
-  showLoginMessage("Signing in...", true);
+  showLoginMessage("Checking Supabase connection...", true);
   if(button) button.disabled=true;
 
   try{
-    // Do NOT call signOut() before login. A failed signOut/network request
-    // can prevent signInWithPassword() from running and cause "Failed to fetch".
+    // First verify that this page can reach the configured Supabase project.
+    // This separates network/configuration problems from wrong credentials.
+    const healthResponse = await fetch(
+      SUPABASE_URL + "/auth/v1/settings",
+      {
+        method:"GET",
+        headers:{
+          "apikey":SUPABASE_PUBLISHABLE_KEY,
+          "Content-Type":"application/json"
+        },
+        cache:"no-store"
+      }
+    );
+
+    if(!healthResponse.ok){
+      let detail="";
+      try{ detail=await healthResponse.text(); }catch(_){}
+      throw new Error(
+        "Supabase connection failed (HTTP " + healthResponse.status + ")" +
+        (detail ? ": " + detail.slice(0,220) : ".")
+      );
+    }
+
+    showLoginMessage("Supabase connected. Signing in...", true);
+
     const {data,error}=await supabaseClient.auth.signInWithPassword({
       email: email,
       password: password
     });
 
     if(error){
+      console.error("Supabase sign-in error:", error);
+      const code=error.code || "";
+      const status=error.status ? " [HTTP " + error.status + "]" : "";
       let message=error.message || "Unable to sign in.";
+
       if(/invalid login credentials/i.test(message)){
-        message="Invalid email or password. Make sure the account exists in Supabase Authentication and the password is correct.";
+        message="Invalid email or password. Check the exact Supabase Authentication email and password.";
       }else if(/email not confirmed/i.test(message)){
-        message="This email is not confirmed in Supabase. Confirm the email first, or disable email confirmation in Supabase Authentication settings.";
+        message="Email not confirmed. Confirm this user in Supabase Authentication, then try again.";
+      }else if(/user not found/i.test(message)){
+        message="User not found. The email must exist under Supabase Authentication > Users.";
       }
-      showLoginMessage("Login failed: " + message);
+
+      showLoginMessage(
+        "Login failed" + status + (code ? " (" + code + ")" : "") + ": " + message
+      );
       return;
     }
 
@@ -283,8 +318,15 @@ async function adminLogin(){
     document.getElementById("adminPanel").scrollIntoView({behavior:"smooth"});
 
   }catch(e){
-    console.error("Administrator login error:",e);
-    showLoginMessage("Login error: " + (e.message || String(e)));
+    console.error("Administrator login/connection error:",e);
+    const message=e && e.message ? e.message : String(e);
+    if(/failed to fetch|networkerror|load failed/i.test(message)){
+      showLoginMessage(
+        "Cannot reach Supabase. Check your internet connection, Supabase URL/key, or browser blocking."
+      );
+    }else{
+      showLoginMessage("Login/connection error: " + message);
+    }
   }finally{
     if(button) button.disabled=false;
   }
